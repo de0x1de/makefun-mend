@@ -557,6 +557,10 @@ function v4aEdits(lines: string[], strict: boolean): Edit[] {
       const chunks: VChunk[] = [];
       let cur: VChunk | null = null;
       let curOpen = false;
+      // A `*** End of File` line ends a chunk; it never starts one. One seen before any chunk
+      // is remembered: if the section ends up with no chunk and no Move to, the section rule
+      // below names the Update File line; otherwise the stray line itself is the parse error.
+      let strayEof = -1;
       for (let k = idx; k < raw.length; k += 1) {
         const r = raw[k]!;
         const t = r.text;
@@ -566,15 +570,18 @@ function v4aEdits(lines: string[], strict: boolean): Edit[] {
           chunks.push(cur);
           curOpen = true;
         } else if (t.trim() === '*** End of File') {
-          if (cur === null || !curOpen) {
-            cur = { anchor: null, eof: true, body: [] };
-            chunks.push(cur);
-          } else {
+          if (cur !== null && curOpen) {
             cur.eof = true;
+          } else if (chunks.length > 0) {
+            throw new Exit2(`error: parse ${r.lineNo}`);
+          } else if (strayEof < 0) {
+            strayEof = r.lineNo;
           }
           curOpen = false;
         } else if (t === '' || t[0] === ' ' || t[0] === '-' || t[0] === '+') {
           if (cur === null || !curOpen) {
+            // A body line starts only the first chunk; a later chunk starts at an @@ line.
+            if (chunks.length > 0) throw new Exit2(`error: parse ${r.lineNo}`);
             cur = { anchor: null, eof: false, body: [] };
             chunks.push(cur);
             curOpen = true;
@@ -586,6 +593,7 @@ function v4aEdits(lines: string[], strict: boolean): Edit[] {
         }
       }
       if (chunks.length === 0 && moveTo === null) throw new Exit2(`error: parse ${lineNo}`);
+      if (strayEof > 0) throw new Exit2(`error: parse ${strayEof}`);
       sections.push({ kind, path, moveTo, addLines: [], chunks, lineNo });
     }
   }
